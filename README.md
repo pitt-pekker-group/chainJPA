@@ -207,6 +207,7 @@ import pandas as pd
 
 from rf_squid_chain import make_realizations, make_job, run_job
 from pae_explorer import make_pae_explorer
+from sweep_explorer import make_sweep_explorer
 
 # ---- 1. Simulation settings (fixed for the whole sweep) -------------
 omega_p = (2.*np.pi)*12.0E9       # This sets the pump frequency in Hz
