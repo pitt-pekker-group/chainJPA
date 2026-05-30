@@ -1,0 +1,29 @@
+# chainJPA dependencies — Python 3.10 or newer.
+# Install with:
+#     pip install -r requirements.txt
+
+# Core scientific computing
+numpy>=1.24
+scipy>=1.11
+
+# Circuit-network visualization (network layout in CircuitNetwork.draw)
+networkx>=3.0
+
+# Plotting (used by circuit_network.draw and both explorer widgets)
+matplotlib>=3.7
+
+# Tabular data and interactive explorer widgets
+pandas>=2.0
+seaborn>=0.13
+ipywidgets>=8.0
+
+# Parallel job execution + progress bar
+joblib>=1.3
+tqdm>=4.65
+
+# Fast ODE backend (default for run_job). Optional but strongly
+# recommended — the scipy fallback is roughly 10x slower.
+numba>=0.57
+
+# Notebooks (for the example notebook + interactive explorers)
+jupyter>=1.0

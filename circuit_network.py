@@ -42,6 +42,7 @@ __all__ = [
     "JosephsonJunction",
     "LinearInductor",
     "CircuitNetwork",
+    "CPR",
     "PHI_0",
     "PHI_0_RED",
 ]
