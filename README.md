@@ -1,7 +1,4 @@
 # chainJPA
-<<<<<<< HEAD
-Software for simulation of realistic, single-port JPAs with fabrication imperfections
-=======
 Simulation of realistic single-port Josephson Parametric Amplifiers (JPAs)
 comprised of a capacitor shunted by an inductive element composed of linear 
 inductors and Josephson junctions. chainJPA is specifically designed for 
