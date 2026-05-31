@@ -1422,7 +1422,7 @@ def CPR(make_inductor_block, kwargs,
     res = {'phi': [], 'current': [], 'fail': False, 'cpr': None, 'cn': None}
 
     cn = make_inductor_block(**kwargs)
-    pinned_indices = [len(cn.nodes) - 1]
+    pinned_indices = [len(cn.nodes) - 1]      # Be careful if there is more than one pinned index !!!!
     res['cn'] = cn
 
     solver, free_indices = cn.make_sweep_solver(
@@ -1454,12 +1454,12 @@ def CPR(make_inductor_block, kwargs,
         injection_currents_dn[k] = info['injection_currents']
     injection_currents_dn = np.flip(injection_currents_dn)
 
-    if np.max(np.abs(injection_currents_up - injection_currents_dn)) > 1E-10:
+    if np.max(np.abs(injection_currents_up.flatten() - injection_currents_dn.flatten())) > 1E-10:
         if verbose:
             print('Error: injection current hysteresis')
         res['fail'] = True
 
-    if not np.all(np.diff(injection_currents_up) > 0):
+    if not np.all(np.diff(injection_currents_up.flatten()) > 0):
         if verbose:
             print('Error: currents not monotonic')
         res['fail'] = True

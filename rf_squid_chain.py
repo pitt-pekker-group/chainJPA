@@ -366,6 +366,8 @@ def run_job(job: Job,
         "fluxes": _broadcast_fluxes(job.phi_ext0, len(job.L1)),
     }, verbose=verbose)
     if cpr_data["fail"]:
+        if(verbose):
+            print("CPR failed")
         return {"job": job, "result": None, "status": "cpr_failed"}
 
     res = find_pump_amplitude(

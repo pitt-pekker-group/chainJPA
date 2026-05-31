@@ -472,7 +472,11 @@ def find_resonant_freq(cpr, C1: float, kappa: float):
         print(f"error: number of roots not one {x}")
         return [0, 0, 0]
     omega_0 = np.sqrt(cpr(x[0], 1) / (C1 * PHI_0_RED))
-    return [x, omega_0, omega_0 * np.sqrt(1 - (kappa / (2 * omega_0)) ** 2)]
+    
+    z = 1 - (kappa / (2 * omega_0)) ** 2
+    if z<0:
+        z=0
+    return [x, omega_0, omega_0 * np.sqrt(z)]
 
 
 def find_pump_amplitude(
