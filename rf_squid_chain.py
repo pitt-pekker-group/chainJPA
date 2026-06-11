@@ -260,19 +260,12 @@ def make_job(base: BaseRealization,
              pm: float = 1.0) -> Job:
     """Apply scaling multipliers to a base realization to produce a Job.
 
-    Scaling convention used by this code:
-
-        - ``im`` scales ``Ic`` (overall critical-current scale)
-        - ``cm`` scales ``C1``
-        - ``L1`` is scaled by ``lm / im``. Combined with the ``im`` scaling
-          of ``Ic``, this makes the product ``L1 * Ic`` (which sets the
-          SQUID's screening parameter beta_L) depend only on ``lm``, so
-          ``lm`` controls SQUID nonlinearity independently of the overall
-          current scale set by ``im``.
-        - ``pm`` scales ``phi_ext0``
-        - ``L1p``, ``L2p``, and ``kappa`` are NOT scaled by any multiplier
-          (parasitic inductances and the external coupling rate are
-          treated as fixed properties of the device geometry).
+    The mapping is the one suggested by the multiplier names:
+        - ``im`` (critical-current multiplier)  scales ``Ic``
+        - ``cm`` (capacitance multiplier)        scales ``C1``
+        - ``lm`` (inductance multiplier)         scales ``L1``, ``L1p``, ``L2p``
+        - ``pm`` (phase multiplier)              scales ``phi_ext0``
+        - ``kappa`` is not scaled by any multiplier
 
     Override this function in your notebook if you use a different
     scaling convention.
@@ -366,8 +359,6 @@ def run_job(job: Job,
         "fluxes": _broadcast_fluxes(job.phi_ext0, len(job.L1)),
     }, verbose=verbose)
     if cpr_data["fail"]:
-        if(verbose):
-            print("CPR failed")
         return {"job": job, "result": None, "status": "cpr_failed"}
 
     res = find_pump_amplitude(

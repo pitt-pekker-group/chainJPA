@@ -35,16 +35,6 @@ PHI_0     = h / (2.0 * e)              # magnetic flux quantum, Wb
 PHI_0_RED = PHI_0 / (2.0 * np.pi)      # reduced flux quantum, Phi_0 / (2*pi)
 
 
-__all__ = [
-    "first_cross",
-    "compute_gain_chain",
-    "find_resonant_freq",
-    "find_pump_amplitude",
-    "PHI_0",
-    "PHI_0_RED",
-]
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -469,14 +459,18 @@ def find_resonant_freq(cpr, C1: float, kappa: float):
     """
     x = cpr.roots(extrapolate=False)
     if len(x) != 1:
-        print(f"error: number of roots not one {x}")
-        return [0, 0, 0]
+        print(f"error: number of roots not one {x}, {cpr(x)}")
+        return 0, 0, 0, False
     omega_0 = np.sqrt(cpr(x[0], 1) / (C1 * PHI_0_RED))
     
-    z = 1 - (kappa / (2 * omega_0)) ** 2
-    if z<0:
-        z=0
-    return [x, omega_0, omega_0 * np.sqrt(z)]
+    # compute frequency renormalized by loss
+    r=(kappa / (2 * omega_0)) ** 2
+    if r < 1:
+        omega_r=omega_0 * np.sqrt(1 - r)
+        return x, omega_0, omega_r, True
+    else:
+        omega_r=0
+    return x, omega_0, omega_r, False
 
 
 def find_pump_amplitude(
@@ -539,11 +533,15 @@ def find_pump_amplitude(
     extra_kwargs  = gain_chain_kwargs or {}
 
     # ---------- Small-signal frequency via find_resonant_freq ----------
-    _, _, omega_0 = find_resonant_freq(cpr, C1, kappa)
+    _, _, omega_0, status_OK = find_resonant_freq(cpr, C1, kappa)
     omega_0 = float(omega_0)
     if verbose:
         print(f"[find_pump_amplitude] omega_0 = {omega_0:.4e} rad/s "
               f"({omega_0/(2*np.pi)/1e9:.3f} GHz)")
+    if not status_OK:
+        return {"pae": 0.0, "as_sq_max": 0.0, "ap2": None,
+                "sweep_signal": [], "sweep_pump": [],
+                "omega_0": omega_0, "status": "fail_omega"}
     if not (omega_0_min <= omega_0 <= omega_0_max):
         return {"pae": 0.0, "as_sq_max": 0.0, "ap2": None,
                 "sweep_signal": [], "sweep_pump": [],

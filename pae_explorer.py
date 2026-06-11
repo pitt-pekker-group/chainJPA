@@ -16,10 +16,16 @@ dropdown OR aggregated:
 PAE NaNs are treated as zero. The plot supports an optional single-level
 contour overlay.
 
+Pass ``use_design_params=True`` to use the physical design quantities
+``designIc`` (in place of ``im``) and ``designBetaPrime`` (in place of
+``lm``) — the DataFrame must then carry those columns instead of (or
+alongside) ``im`` and ``lm``.
+
 Usage in a Jupyter notebook:
 
     from pae_explorer import make_pae_explorer
     make_pae_explorer(df)
+    make_pae_explorer(df, use_design_params=True)
 """
 
 import numpy as np
@@ -35,9 +41,47 @@ PRECISION = 6
 PARAMS = ['di', 'im', 'cm', 'lm', 'pm']
 ALWAYS_FIX_PARAMS = ['im', 'cm', 'lm']   # never aggregated when off-axis
 
+# Display overrides. When a column appears as a heatmap axis, fix-value
+# dropdown, or title token, the printed label is taken from DISPLAY_NAMES
+# and the printed numeric values are multiplied by DISPLAY_SCALES. The
+# underlying dataframe column is unchanged.
+DISPLAY_NAMES = {
+    'designIc':        'Ic [\u03BCA]',     # μA
+    'designBetaPrime': "\u03B2'",          # β'
+}
+DISPLAY_SCALES = {
+    'designIc': 1e6,                       # amps → microamps
+}
+
+
+def _display_name(p):
+    return DISPLAY_NAMES.get(p, p)
+
+
+def _display_scale(p):
+    return DISPLAY_SCALES.get(p, 1.0)
+
+
+def _round_sig(values, sig=PRECISION):
+    """Round each value to ``sig`` significant figures (not decimal places).
+
+    Rounding to a fixed number of decimal places destroys precision for
+    very small values: round(1.884e-5, 6) is 1.9e-5. Rounding to a fixed
+    number of significant figures preserves precision regardless of
+    magnitude, which matters for values like Ic that are stored in SI
+    units (~1e-5 amps) but displayed in μA.
+    """
+    arr = np.asarray(values, dtype=float)
+    out = arr.copy()
+    nz = arr != 0
+    if nz.any():
+        n = sig - 1 - np.floor(np.log10(np.abs(arr[nz]))).astype(int)
+        out[nz] = np.round(arr[nz] * 10.0**n) / 10.0**n
+    return out
+
 
 def _round_unique(series):
-    return sorted(series.round(PRECISION).unique())
+    return sorted(np.unique(_round_sig(series.to_numpy())))
 
 
 def _agg_label(kind, q_pct):
@@ -48,17 +92,43 @@ def _agg_label(kind, q_pct):
     return f'p{q_pct:.0f}'
 
 
-def make_pae_explorer(df, default_axis_x='im', default_axis_y='lm'):
+def make_pae_explorer(df, default_axis_x='im', default_axis_y='lm',
+                      use_design_params=False):
     """Build and display the heatmap-explorer widget for `df`.
 
     Parameters
     ----------
     df : pandas.DataFrame
-        Sweep results with columns 'di', 'im', 'cm', 'lm', 'pm', 'PAE'.
+        Sweep results with columns 'di', 'im', 'cm', 'lm', 'pm', 'PAE'
+        (or 'designIc' / 'designBetaPrime' in place of 'im' / 'lm' when
+        ``use_design_params=True``).
     default_axis_x, default_axis_y : str
         Initial x- and y-axis parameter names. Must differ; must each be
-        one of {'di', 'im', 'cm', 'lm', 'pm'}.
+        one of the five active parameter names (see ``use_design_params``).
+        If left at the defaults of ``'im'`` and ``'lm'`` and
+        ``use_design_params=True``, they auto-remap to ``'designIc'`` and
+        ``'designBetaPrime'``.
+    use_design_params : bool, default False
+        If True, swap the multipliers ``im`` and ``lm`` for the physical
+        design quantities ``designIc`` and ``designBetaPrime``. The
+        DataFrame must then contain those columns. Heatmap axes, fix
+        dropdowns, and title labels all use the swapped names. ``cm``,
+        ``pm``, and ``di`` are unaffected.
     """
+    # Locally rebind the parameter lists so the nested closures pick up
+    # whichever set is active. The module-level constants are unchanged.
+    if use_design_params:
+        PARAMS = ['di', 'designIc', 'cm', 'designBetaPrime', 'pm']
+        ALWAYS_FIX_PARAMS = ['designIc', 'cm', 'designBetaPrime']
+        # Remap caller's defaults if they're still the un-swapped names.
+        if default_axis_x == 'im':
+            default_axis_x = 'designIc'
+        if default_axis_y == 'lm':
+            default_axis_y = 'designBetaPrime'
+    else:
+        PARAMS = ['di', 'im', 'cm', 'lm', 'pm']
+        ALWAYS_FIX_PARAMS = ['im', 'cm', 'lm']
+
     missing = [c for c in PARAMS + ['PAE'] if c not in df.columns]
     if missing:
         raise KeyError(f'df is missing required columns: {missing}')
@@ -72,15 +142,19 @@ def make_pae_explorer(df, default_axis_x='im', default_axis_y='lm'):
     default_contour = float(finite_pae.median()) if len(finite_pae) else 0.0
 
     # Widgets -----------------------------------------------------------------
-    axis_x = widgets.Dropdown(options=PARAMS, value=default_axis_x,
-                              description='x axis:')
-    axis_y = widgets.Dropdown(options=PARAMS, value=default_axis_y,
-                              description='y axis:')
+    axis_x = widgets.Dropdown(options=[(_display_name(p), p) for p in PARAMS],
+                              value=default_axis_x, description='x axis:')
+    axis_y = widgets.Dropdown(options=[(_display_name(p), p) for p in PARAMS],
+                              value=default_axis_y, description='y axis:')
 
     # Fix dropdowns for ALL five params. Visibility flipped based on whether
-    # the param is on an axis or being aggregated.
+    # the param is on an axis or being aggregated. The visible labels reflect
+    # DISPLAY_NAMES / DISPLAY_SCALES; the underlying .value stays in native units.
     fix_widgets = {
-        p: widgets.Dropdown(options=_round_unique(df[p]), description=f'{p}:')
+        p: widgets.Dropdown(
+            options=[(f'{v * _display_scale(p):.4g}', v) for v in _round_unique(df[p])],
+            description=f'{_display_name(p)}:',
+        )
         for p in PARAMS
     }
 
@@ -163,9 +237,9 @@ def make_pae_explorer(df, default_axis_x='im', default_axis_y='lm'):
 
     def compute_heat(sel, ax_x, ax_y):
         sel = sel.assign(
-            x_r=sel[ax_x].round(PRECISION),
-            y_r=sel[ax_y].round(PRECISION),
-            di_r=sel['di'].round(PRECISION),
+            x_r=_round_sig(sel[ax_x].to_numpy()),
+            y_r=_round_sig(sel[ax_y].to_numpy()),
+            di_r=_round_sig(sel['di'].to_numpy()),
         )
         pm_agg = pm_aggregated()
         di_agg = di_aggregated()
@@ -239,9 +313,11 @@ def make_pae_explorer(df, default_axis_x='im', default_axis_y='lm'):
 
             Z = heat.values
 
+            sx = _display_scale(ax_x)
+            sy = _display_scale(ax_y)
             heat_str = heat.copy()
-            heat_str.columns = [f'{v:.3g}' for v in heat.columns]
-            heat_str.index   = [f'{v:.3g}' for v in heat.index]
+            heat_str.columns = [f'{v * sx:.4g}' for v in heat.columns]
+            heat_str.index   = [f'{v * sy:.4g}' for v in heat.index]
 
             agg_parts = aggregation_description()
             cbar_label = 'PAE' + (f' ({", ".join(agg_parts)})' if agg_parts else '')
@@ -287,11 +363,14 @@ def make_pae_explorer(df, default_axis_x='im', default_axis_y='lm'):
                             bbox=dict(facecolor='black', alpha=0.5,
                                       edgecolor='none', pad=2))
 
-            ax.set_xlabel(ax_x)
-            ax.set_ylabel(ax_y)
+            ax.set_xlabel(_display_name(ax_x))
+            ax.set_ylabel(_display_name(ax_y))
             ax.invert_yaxis()
 
-            fix_parts = [f'{p}={fix_widgets[p].value:.4g}' for p in fixed_params()]
+            fix_parts = [
+                f'{_display_name(p)}={fix_widgets[p].value * _display_scale(p):.4g}'
+                for p in fixed_params()
+            ]
             ax.set_title('  '.join(fix_parts) if fix_parts else '')
             plt.tight_layout()
             plt.show()
@@ -312,7 +391,7 @@ def make_pae_explorer(df, default_axis_x='im', default_axis_y='lm'):
 
     display(widgets.VBox([
         widgets.HBox([axis_x, axis_y]),
-        widgets.HBox([fix_widgets['im'], fix_widgets['cm'], fix_widgets['lm']]),
+        widgets.HBox([fix_widgets[p] for p in ALWAYS_FIX_PARAMS]),
         widgets.HBox([aggregate_pm, fix_widgets['pm']]),
         widgets.HBox([aggregate_di, fix_widgets['di'], agg_kind, percentile]),
         widgets.HBox([contour_on, contour_level]),

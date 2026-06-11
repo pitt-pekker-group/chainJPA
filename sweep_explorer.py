@@ -10,10 +10,15 @@ signal sweep — with one color per pm value. Colors are mapped from a
 shared normalization so identical pm values render in the same color in
 both plots even if their data ranges differ.
 
+Pass ``use_design_params=True`` to filter by the physical design
+quantities ``designIc`` (in place of ``im``) and ``designBetaPrime``
+(in place of ``lm``) — the DataFrame must then carry those columns.
+
 Usage in a Jupyter notebook:
 
     from sweep_explorer import make_sweep_explorer
     make_sweep_explorer(df)
+    make_sweep_explorer(df, use_design_params=True)
 """
 
 import numpy as np
@@ -28,9 +33,47 @@ PRECISION = 6
 PARAMS = ['di', 'im', 'cm', 'lm']
 REQUIRED_COLS = PARAMS + ['pm', 'sweep_pump', 'sweep_signal']
 
+# Display overrides. When a column appears as a dropdown or in the
+# suptitle, the printed label is taken from DISPLAY_NAMES and printed
+# numeric values are multiplied by DISPLAY_SCALES. The underlying
+# DataFrame columns are unchanged.
+DISPLAY_NAMES = {
+    'designIc':        'Ic [\u03BCA]',     # μA
+    'designBetaPrime': "\u03B2'",          # β'
+}
+DISPLAY_SCALES = {
+    'designIc': 1e6,                       # amps → microamps
+}
+
+
+def _display_name(p):
+    return DISPLAY_NAMES.get(p, p)
+
+
+def _display_scale(p):
+    return DISPLAY_SCALES.get(p, 1.0)
+
+
+def _round_sig(values, sig=PRECISION):
+    """Round each value to ``sig`` significant figures (not decimal places).
+
+    Rounding to a fixed number of decimal places destroys precision for
+    very small values: round(1.884e-5, 6) is 1.9e-5. Rounding to a fixed
+    number of significant figures preserves precision regardless of
+    magnitude, which matters for values like Ic that are stored in SI
+    units (~1e-5 amps) but displayed in μA.
+    """
+    arr = np.asarray(values, dtype=float)
+    out = arr.copy()
+    nz = arr != 0
+    if nz.any():
+        n = sig - 1 - np.floor(np.log10(np.abs(arr[nz]))).astype(int)
+        out[nz] = np.round(arr[nz] * 10.0**n) / 10.0**n
+    return out
+
 
 def _round_unique(series):
-    return sorted(series.round(PRECISION).unique())
+    return sorted(np.unique(_round_sig(series.to_numpy())))
 
 
 def _prepare_long(sel, col):
@@ -57,14 +100,16 @@ def make_sweep_explorer(df,
                         signal_ref_lines=(19.0, 20.0, 21.0),
                         pump_ref_xrange=(1.0, 80.0),
                         signal_ref_xrange=(1e-4, 1.0),
-                        palette='coolwarm'):
+                        palette='coolwarm',
+                        use_design_params=False):
     """Build and display the side-by-side sweep explorer.
 
     Parameters
     ----------
     df : pandas.DataFrame
         Sweep results with columns 'di', 'im', 'cm', 'lm', 'pm',
-        'sweep_pump', 'sweep_signal'.
+        'sweep_pump', 'sweep_signal' (or 'designIc' / 'designBetaPrime'
+        in place of 'im' / 'lm' when ``use_design_params=True``).
     pump_ref_lines, signal_ref_lines : iterable of float
         Y-values (in dB) at which to draw horizontal reference lines on
         each subplot. Defaults: pump = (20,) drawn bold; signal =
@@ -73,33 +118,44 @@ def make_sweep_explorer(df,
         Horizontal extent of the reference lines on each subplot.
     palette : str
         seaborn / matplotlib colormap name for the pm color encoding.
+    use_design_params : bool, default False
+        If True, swap the multipliers ``im`` and ``lm`` for the physical
+        design quantities ``designIc`` and ``designBetaPrime``. The
+        DataFrame must then contain those columns.
     """
+    # Locally rebind the parameter list so the closures pick up whichever
+    # set is active. Module-level constants are not affected.
+    if use_design_params:
+        PARAMS        = ['di', 'designIc', 'cm', 'designBetaPrime']
+        REQUIRED_COLS = PARAMS + ['pm', 'sweep_pump', 'sweep_signal']
+    else:
+        PARAMS        = ['di', 'im', 'cm', 'lm']
+        REQUIRED_COLS = PARAMS + ['pm', 'sweep_pump', 'sweep_signal']
+
     missing = [c for c in REQUIRED_COLS if c not in df.columns]
     if missing:
         raise KeyError(f'df is missing required columns: {missing}')
 
-    # Widgets
-    sel_widgets = {p: widgets.Dropdown(options=_round_unique(df[p]),
-                                       description=f'{p}:')
-                   for p in PARAMS}
+    # Widgets — dropdown labels and shown values reflect DISPLAY_NAMES /
+    # DISPLAY_SCALES; underlying .value stays in native units.
+    sel_widgets = {
+        p: widgets.Dropdown(
+            options=[(f'{v * _display_scale(p):.4g}', v) for v in _round_unique(df[p])],
+            description=f'{_display_name(p)}:',
+        )
+        for p in PARAMS
+    }
     out = widgets.Output()
 
     def redraw(*_):
         with out:
             clear_output(wait=True)
 
-            di = sel_widgets['di'].value
-            im = sel_widgets['im'].value
-            cm = sel_widgets['cm'].value
-            lm = sel_widgets['lm'].value
-
             atol = 10 ** -PRECISION
-            sel = df[
-                np.isclose(df['di'], di, atol=atol) &
-                np.isclose(df['im'], im, atol=atol) &
-                np.isclose(df['cm'], cm, atol=atol) &
-                np.isclose(df['lm'], lm, atol=atol)
-            ]
+            mask = np.ones(len(df), dtype=bool)
+            for p in PARAMS:
+                mask &= np.isclose(df[p], sel_widgets[p].value, atol=atol)
+            sel = df[mask]
 
             long_pump   = _prepare_long(sel, 'sweep_pump')
             long_signal = _prepare_long(sel, 'sweep_signal')
@@ -158,8 +214,10 @@ def make_sweep_explorer(df,
                 legend_host.legend(title='pm',
                                    bbox_to_anchor=(1.02, 1), loc='upper left')
 
-            fig.suptitle(f'di={di:.4g}, im={im:.4g}, '
-                         f'cm={cm:.4g}, lm={lm:.4g}')
+            fig.suptitle('  '.join(
+                f'{_display_name(p)}={sel_widgets[p].value * _display_scale(p):.4g}'
+                for p in PARAMS
+            ))
             plt.tight_layout()
             plt.show()
 
