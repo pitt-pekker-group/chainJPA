@@ -76,6 +76,37 @@ def _round_unique(series):
     return sorted(np.unique(_round_sig(series.to_numpy())))
 
 
+def _data_span(values):
+    """Min/max of finite values, with a small expansion if they are equal
+    (so a constant column still yields a usable, non-degenerate span)."""
+    v = np.asarray(values, dtype=float)
+    v = v[np.isfinite(v)]
+    if v.size == 0:
+        return 0.0, 1.0
+    lo, hi = float(v.min()), float(v.max())
+    if lo == hi:
+        d = abs(lo) * 0.1 if lo != 0 else 1.0
+        lo, hi = lo - d, hi + d
+    return lo, hi
+
+
+def _slider_bounds(values, given=None, pad_frac=0.05):
+    """Return (min, max, step) for a range slider over `values`, padded by
+    `pad_frac` beyond the data. If `given` (an explicit (lo, hi) the caller
+    wants to preset) falls outside the data, the bounds are widened to
+    include it so the preset is always representable on the slider."""
+    lo, hi = _data_span(values)
+    pad = (hi - lo) * pad_frac
+    lo, hi = lo - pad, hi + pad
+    if given is not None:
+        g0, g1 = float(min(given)), float(max(given))
+        lo, hi = min(lo, g0), max(hi, g1)
+    step = (hi - lo) / 200.0
+    if not np.isfinite(step) or step <= 0:
+        step = 1.0
+    return lo, hi, step
+
+
 # ---------------------------------------------------------------------------
 # Pure plotting function
 # ---------------------------------------------------------------------------
@@ -87,7 +118,9 @@ def plot_pae_vs_flux(df, fix=None, series=None,
                     max_legend_entries=10,
                     xlabel='Flux per plaquette',
                     ylabel='PAE',
-                    title=None):
+                    title=None,
+                    xlim=None,
+                    ylim=None):
     """Plot PAE as a function of pm. Pure function — no widgets.
 
     Parameters
@@ -95,6 +128,9 @@ def plot_pae_vs_flux(df, fix=None, series=None,
     df : pandas.DataFrame
         Must contain 'pm', 'PAE', and every column named in `fix` and
         (if given) `series`.
+    xlim, ylim : tuple(float, float), optional
+        Axis limits ``(lo, hi)`` for the x-axis (pm) and y-axis (PAE).
+        If None (default), the axis autoscales to the data.
     fix : dict[str, float], optional
         Filter the dataframe to rows where each named column equals
         (within floating-point tolerance) the given value. A key whose
@@ -148,6 +184,10 @@ def plot_pae_vs_flux(df, fix=None, series=None,
                 fontsize=11, color='gray')
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
+        if xlim is not None:
+            ax.set_xlim(xlim)
+        if ylim is not None:
+            ax.set_ylim(ylim)
         return ax
 
     if series is not None:
@@ -197,13 +237,19 @@ def plot_pae_vs_flux(df, fix=None, series=None,
     if title:
         ax.set_title(title)
 
+    if xlim is not None:
+        ax.set_xlim(xlim)
+    if ylim is not None:
+        ax.set_ylim(ylim)
+
     return ax
 
 
 # ---------------------------------------------------------------------------
 # Interactive widget
 # ---------------------------------------------------------------------------
-def make_flux_explorer(df, use_design_params=False, palette='coolwarm'):
+def make_flux_explorer(df, use_design_params=False, palette='coolwarm',
+                       xlim=None, ylim=None):
     """Build and display the interactive PAE-vs-flux explorer.
 
     Parameters
@@ -218,6 +264,13 @@ def make_flux_explorer(df, use_design_params=False, palette='coolwarm'):
         parameters.
     palette : str
         seaborn / matplotlib palette for the hue.
+    xlim, ylim : tuple(float, float), optional
+        Initial axis limits ``(lo, hi)`` for the x-axis (pm) and y-axis
+        (PAE). When given, the corresponding axis starts in manual mode
+        with its range slider set to this value (and its "auto" box
+        unchecked); when None (default), the axis starts on autoscale.
+        Either way the ranges are afterwards adjustable live via the
+        sliders in the widget.
     """
     if use_design_params:
         ic_col, beta_col = 'designIc', 'designBetaPrime'
@@ -249,20 +302,52 @@ def make_flux_explorer(df, use_design_params=False, palette='coolwarm'):
         for p in params
     }
 
+    # Axis-range controls. Each axis has an "auto" checkbox (autoscale to the
+    # data) plus a range slider used when auto is off. The slider bounds are
+    # padded a little beyond the full-data span, and widened to include any
+    # caller-supplied xlim/ylim so a preset is always representable.
+    x_lo, x_hi, x_step = _slider_bounds(df['pm'], given=xlim)
+    y_lo, y_hi, y_step = _slider_bounds(df['PAE'], given=ylim)
+    x_start = tuple(xlim) if xlim is not None else _data_span(df['pm'])
+    y_start = tuple(ylim) if ylim is not None else _data_span(df['PAE'])
+
+    x_auto = widgets.Checkbox(value=(xlim is None), description='auto x',
+                              indent=False,
+                              layout=widgets.Layout(width='110px'))
+    y_auto = widgets.Checkbox(value=(ylim is None), description='auto y',
+                              indent=False,
+                              layout=widgets.Layout(width='110px'))
+    x_range = widgets.FloatRangeSlider(
+        value=list(x_start), min=x_lo, max=x_hi, step=x_step,
+        description='x-range:', readout_format='.4g',
+        continuous_update=False, disabled=(xlim is None),
+        layout=widgets.Layout(width='45%'))
+    y_range = widgets.FloatRangeSlider(
+        value=list(y_start), min=y_lo, max=y_hi, step=y_step,
+        description='y-range:', readout_format='.4g',
+        continuous_update=False, disabled=(ylim is None),
+        layout=widgets.Layout(width='45%'))
+
     out = widgets.Output()
 
     def update_visibility():
         s = series_choice.value
         for p in params:
             value_widgets[p].layout.display = 'none' if p == s else ''
+        # grey out a range slider while its axis is on autoscale
+        x_range.disabled = x_auto.value
+        y_range.disabled = y_auto.value
 
     def redraw(*_):
         with out:
             clear_output(wait=True)
             s = series_choice.value
             fix = {p: value_widgets[p].value for p in params}
+            xl = None if x_auto.value else tuple(x_range.value)
+            yl = None if y_auto.value else tuple(y_range.value)
             plt.close('all')
-            plot_pae_vs_flux(df, fix=fix, series=s, palette=palette)
+            plot_pae_vs_flux(df, fix=fix, series=s, palette=palette,
+                             xlim=xl, ylim=yl)
             plt.tight_layout()
             plt.show()
 
@@ -270,14 +355,24 @@ def make_flux_explorer(df, use_design_params=False, palette='coolwarm'):
         update_visibility()
         redraw()
 
+    def on_range_toggle(*_):
+        update_visibility()
+        redraw()
+
     series_choice.observe(on_series_change, names='value')
     for w in value_widgets.values():
         w.observe(redraw, names='value')
+    x_auto.observe(on_range_toggle, names='value')
+    y_auto.observe(on_range_toggle, names='value')
+    x_range.observe(redraw, names='value')
+    y_range.observe(redraw, names='value')
 
     update_visibility()
     display(widgets.VBox([
         widgets.HBox([series_choice]),
         widgets.HBox([value_widgets[p] for p in params]),
+        widgets.HBox([x_auto, x_range]),
+        widgets.HBox([y_auto, y_range]),
         out,
     ]))
     redraw()

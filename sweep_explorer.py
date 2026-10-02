@@ -177,7 +177,7 @@ def make_sweep_explorer(df,
             hue_norm = (pm_min, pm_max)
 
             plt.close('all')
-            fig, (ax_p, ax_s) = plt.subplots(1, 2, figsize=(13, 4.5))
+            fig, (ax_p, ax_s) = plt.subplots(1, 2, figsize=(13, 5.5))
 
             # One shared legend, on the right plot if it has data.
             legend_host = ax_s if long_signal is not None else ax_p

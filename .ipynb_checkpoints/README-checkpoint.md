@@ -207,12 +207,17 @@ import pandas as pd
 
 from rf_squid_chain import make_realizations, make_job, run_job
 from pae_explorer import make_pae_explorer
+from sweep_explorer import make_sweep_explorer
 
 # ---- 1. Simulation settings (fixed for the whole sweep) -------------
-omega_p     = 2 * np.pi * 12e9       # 12 GHz pump
-nc_Pump     = 200                    # pump cycles for FFT
-nc_Signal   = 101                    # signal cycles for FFT
-warmupTime  = 10e-9                  # amount of time trimmed for transient
+omega_p = (2.*np.pi)*12.0E9       # This sets the pump frequency in Hz
+nc_Pump = 200                   # Time span in number of pump cycles that we will use in the FFT
+
+nc_Signal = 101                 # Number of signal cycles that will fit into the time period that we use in the FFT 
+phi_p = 0                       # phase offset between signal and pump, only needed for degenerate amplifiers 
+
+print(f"Signal frequency={(nc_Signal/nc_Pump)*(omega_p/(2.0*np.pi))*1E-9} GHz")
+warmupTime = 10e-9              # Time span for transients to die down before we start collecting data for FFT 
 
 # ---- 2. Nominal device parameters -----------------------------------
 N = 10                                     # Number RF-SQUIDs
